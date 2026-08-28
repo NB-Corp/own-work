@@ -19,9 +19,11 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/absorb-anything
           path: absorb-anything
+      # Pinned to its own owner: the legacy CLI this gate reads lives in a
+      # repository that does not travel with this one.
       - uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/assay
+          repository: X-T-E-R/assay
           ref: v0.14.0
           path: assay
       - uses: pnpm/action-setup@v4

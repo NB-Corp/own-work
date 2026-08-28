@@ -41,11 +41,13 @@ describe("hosted CI contract", () => {
         }),
       }),
     );
+    // The legacy CLI lives in a repository that does not move with this one, so
+    // its owner is pinned rather than inherited from the current one.
     expect(steps).toContainEqual(
       expect.objectContaining({
         uses: "actions/checkout@v4",
         with: expect.objectContaining({
-          repository: "${{ github.repository_owner }}/assay",
+          repository: "X-T-E-R/assay",
           ref: "v0.14.0",
           path: "assay",
         }),

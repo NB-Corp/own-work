@@ -2,6 +2,14 @@
   "name": "own-work",
   "version": "0.1.0",
   "description": "Task, Roadmap, Spec, and System registry workflows for your own work.",
+  "keywords": ["cli", "tasks", "roadmap", "spec", "project-management", "local-first", "ai-agent"],
+  "homepage": "https://github.com/NB-Corp/own-work#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NB-Corp/own-work.git",
+    "directory": "packages/own-work"
+  },
+  "bugs": "https://github.com/NB-Corp/own-work/issues",
   "license": "MIT",
   "type": "module",
   "engines": { "node": ">=22.13.0" },
