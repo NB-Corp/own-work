@@ -1,6 +1,18 @@
+<div align="center">
+
 # Own Work
 
 **Tasks, roadmaps, and specs that survive the session.**
+
+[![ci](https://github.com/NB-Corp/own-work/actions/workflows/ci.yml/badge.svg)](https://github.com/NB-Corp/own-work/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen.svg)](https://nodejs.org)
+
+[Install](#install) · [absorb-anything (study half)](https://github.com/NB-Corp/absorb-anything)
+
+</div>
+
+---
 
 Own Work is a local-first CLI for tracking what you build. It exists because the chat scrollback has quietly become a system of record: the task list lives in a conversation, the acceptance criteria live in a prompt, and both evaporate at the next session. Own Work keeps them where they belong — plain files with stable ids, owned by your repo.
 
