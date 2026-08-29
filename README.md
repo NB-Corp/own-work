@@ -112,7 +112,7 @@ No server, no database, no account. `task.json` carries the identity and the rev
 
 ## Part of a pair
 
-Own Work is the build half of a two-tool suite. [`absorb-anything`](https://github.com/NB-Corp/absorb-anything) is the study half: it turns the code you read into durable evidence, on the same on-disk workspace format. Use Own Work alone if you only need execution tracking, or run both over one `.absorb/` directory when decisions should trace back to the evidence behind them.
+Own Work is the build half of a two-tool suite. [`absorb-anything`](https://github.com/NB-Corp/absorb-anything) is the study half: it turns whatever you study — code, papers, reference projects — into durable evidence, on the same on-disk workspace format. Use Own Work alone if you only need execution tracking, or run both over one `.absorb/` directory when decisions should trace back to the evidence behind them.
 
 **Absorb anything. Build Your Own.**
 
