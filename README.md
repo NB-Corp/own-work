@@ -23,23 +23,23 @@ ownwork roadmap create --title "Pulse-level control"   # an intended outcome, no
 ownwork system register ./packages/engine --primary    # what you are actually building
 ```
 
-> Status: 0.1.0, pre-release, not on npm yet. Build from source with the steps below. The commands above are the committed surface for the first release, and every one of them is run against the CLI before it ships.
+> Status: 0.1.0, [on npm](https://www.npmjs.com/package/own-work). The commands above are the committed surface for the first release, and every one of them is run against the CLI before it ships.
 
 ## Install
 
-Requires Node >= 22.13 and pnpm 11. Own Work builds against its sibling [`absorb-anything`](https://github.com/NB-Corp/absorb-anything), so clone both next to each other:
+Requires Node >= 22.13.
+
+```bash
+npm install -g own-work
+```
+
+To hack on it instead, clone it next to its sibling [`absorb-anything`](https://github.com/NB-Corp/absorb-anything) (the workspace resolves the shared core from the sibling checkout); the CLI lands at `packages/own-work/dist/cli.js`:
 
 ```bash
 git clone https://github.com/NB-Corp/absorb-anything
 git clone https://github.com/NB-Corp/own-work
 cd absorb-anything && pnpm install && pnpm build && cd ..
 cd own-work && pnpm install && pnpm build
-```
-
-The CLI is now at `packages/own-work/dist/cli.js`. Put it on your PATH however you like — an alias is enough:
-
-```bash
-alias ownwork="node $PWD/packages/own-work/dist/cli.js"
 ```
 
 ## A Task is one outcome, not one attempt
