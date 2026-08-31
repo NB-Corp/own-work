@@ -1,11 +1,8 @@
 import path from "node:path";
 
 import { Command, Option } from "@commander-js/extra-typings";
-import {
-  PRODUCT_VERSION,
-  discoverFrameworkRoot,
-  resolveEnvelopeContext,
-} from "absorb-anything-core";
+import { discoverFrameworkRoot, resolveEnvelopeContext } from "absorb-anything-core";
+import { OWN_WORK_VERSION } from "./constants.js";
 import { migrateOwnWorkEnvelope } from "./coordination.js";
 import { mapCliError } from "./errors.js";
 import { checkOwnWork, getOwnWorkStatus, initOwnWork, primeOwnWork } from "./lifecycle.js";
@@ -238,7 +235,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   const program = new Command()
     .name("ownwork")
     .description("Build your own work with Tasks, Roadmaps, Specs, and Systems.")
-    .version(PRODUCT_VERSION)
+    .version(OWN_WORK_VERSION)
     .configureOutput({ writeOut: output.stdout, writeErr: output.stderr });
 
   program

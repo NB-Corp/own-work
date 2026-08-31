@@ -4,7 +4,6 @@ import path from "node:path";
 import {
   type CheckRow,
   type FrameworkStatusResult,
-  PRODUCT_VERSION,
   checkFramework,
   getFrameworkStatus,
   initFramework,
@@ -14,6 +13,7 @@ import {
   workspaceRelativePath,
   workspaceWorkRelativePath,
 } from "absorb-anything-core";
+import { OWN_WORK_VERSION } from "./constants.js";
 import { listRoadmaps, validateRoadmaps } from "./roadmap.js";
 import { SEMANTIC_DETAIL_COMMAND, SEMANTIC_TOPICS, semanticDigest } from "./semantics.js";
 import { listSpecs, projectSpecsReadme, validateSpecs } from "./spec.js";
@@ -262,7 +262,7 @@ export async function primeOwnWork(options: { readonly root: string }) {
   const status = await getOwnWorkStatus(options);
   return {
     root: path.resolve(options.root),
-    productVersion: PRODUCT_VERSION,
+    productVersion: OWN_WORK_VERSION,
     semantics: semanticDigest(),
     topics: SEMANTIC_TOPICS,
     detailsCommand: SEMANTIC_DETAIL_COMMAND,

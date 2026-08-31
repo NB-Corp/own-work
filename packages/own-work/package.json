@@ -1,6 +1,6 @@
 {
   "name": "own-work",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Task, Roadmap, Spec, and System registry workflows for your own work.",
   "keywords": ["cli", "tasks", "roadmap", "spec", "project-management", "local-first", "ai-agent"],
   "homepage": "https://github.com/NB-Corp/own-work#readme",
@@ -12,9 +12,15 @@
   "bugs": "https://github.com/NB-Corp/own-work/issues",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22.13.0" },
-  "bin": { "ownwork": "./dist/cli.js" },
-  "exports": { ".": "./dist/index.js" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "ownwork": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "types": "./dist/index.d.ts",
   "files": ["dist"],
   "scripts": {
