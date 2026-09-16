@@ -19,7 +19,8 @@
     "ownwork": "./dist/cli.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./tasks": "./dist/task.js"
   },
   "types": "./dist/index.d.ts",
   "files": ["dist"],

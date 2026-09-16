@@ -426,6 +426,32 @@ describe("native Task relations, archive, and pagination", () => {
     ).rejects.toMatchObject({ code: "TASK_RELATION_INVALID" });
   });
 
+  it("reads legacy relation targets without aliasing or rewriting them", async () => {
+    const root = await workspace("LegacyRelations");
+    const target = await createTask({ root, title: "Target" });
+    const source = await createTask({ root, title: "Source" });
+    const file = path.join(root, "tasks", source.task.id, "task.json");
+    const value = JSON.parse(await readFile(file, "utf8")) as { meta: { assay: { relations: unknown[] } } };
+    value.meta.assay.relations = [{ type: "succeeds", target: target.task.id, evidence: "legacy" }];
+    await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+    const legacy = await showTask({ root, id: source.task.id });
+    expect(legacy.relations).toEqual([{ type: "succeeds", target: target.task.id, evidence: "legacy" }]);
+    const listed = await listTasks({ root });
+    expect(listed.tasks.find((entry) => entry.id === source.task.id)?.valid).toBe(true);
+    const canonical = { type: "continues", task_id: target.task.id } as const;
+    const mixed = [{ type: "succeeds", target: target.task.id, evidence: "legacy" }, canonical];
+    value.meta.assay.relations = mixed;
+    await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+    const mixedRead = await showTask({ root, id: source.task.id });
+    expect(mixedRead.relations).toEqual(mixed);
+    const updated = await updateTaskStatus({ root, id: source.task.id, status: "paused" });
+    expect(updated.relations).toEqual(mixed);
+    const persisted = JSON.parse(await readFile(file, "utf8")) as { meta: { assay: { relations: unknown[] } } };
+    expect(persisted.meta.assay.relations).toEqual(mixed);
+    await expect(setTaskRelations({ root, id: source.task.id, relations: [{ type: "succeeds", target: target.task.id } as never] })).rejects.toMatchObject({ code: "TASK_RELATION_INVALID" });
+    await expect(setTaskRelations({ root, id: source.task.id, relations: [{ type: "invented", target: target.task.id } as never] })).rejects.toMatchObject({ code: "TASK_RELATION_INVALID" });
+  });
+
   // 12 lock-contention rounds run ~25s unloaded on Windows; 30s times out under parallel CI load.
   it("serializes concurrent relation writes so a cycle cannot pass two stale reads", async () => {
     const root = await workspace("ConcurrentRelations");

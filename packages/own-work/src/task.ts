@@ -28,7 +28,12 @@ import {
   readTaskText,
   removeTaskFile,
   withTaskLock,
+  withEmbeddedTaskLock,
 } from "./tasks/task-storage.js";
+import { readEmbeddedTaskStorage } from "./tasks/embedded-storage.js";
+export { initializeEmbeddedTaskStorage } from "./tasks/embedded-storage.js";
+import { workItemCreateSchema, workItemMetadataSchema, workItemPatchSchema, type WorkItemCreate, type WorkItemMetadata, type WorkItemPatch } from "./tasks/work-item.js";
+export type { WorkItemCreate, WorkItemMetadata, WorkItemPatch } from "./tasks/work-item.js";
 import {
   MAX_TASK_PREFIX_DEPTH,
   type TaskTree,
@@ -71,6 +76,14 @@ export interface TaskRelation {
   readonly type: TaskRelationType;
   readonly task_id: string;
 }
+export const LEGACY_TASK_RELATION_TYPES = ["succeeds", "follows"] as const;
+export type LegacyTaskRelationType = (typeof LEGACY_TASK_RELATION_TYPES)[number];
+export interface LegacyTaskRelation {
+  readonly type: LegacyTaskRelationType;
+  readonly target: string;
+  readonly [key: string]: unknown;
+}
+export type TaskRelationRecord = TaskRelation | LegacyTaskRelation;
 
 export type TaskErrorCode =
   | "TASK_INVALID"
@@ -116,6 +129,38 @@ export interface CreateTaskOptions {
   readonly priority?: string;
   readonly relations?: readonly TaskRelation[];
   readonly now?: Date;
+  readonly workItem?: WorkItemCreate;
+}
+
+export interface UpdateWorkItemOptions {
+  readonly root: string;
+  readonly workspaceId: string;
+  readonly id: string;
+  readonly expectedRevision: number;
+  readonly patch: WorkItemPatch;
+  readonly now?: Date;
+}
+
+export interface WorkItemSummary {
+  readonly workspaceId: string;
+  readonly category: string;
+  readonly sessionIds: readonly string[];
+  readonly executionIds: readonly string[];
+  readonly updatedAt: string;
+}
+
+function workItemMeta(task: TaskEnvelope): WorkItemMetadata | undefined {
+  const value = task.meta.own_work_item;
+  if (value === undefined) return undefined;
+  const parsed = workItemMetadataSchema.safeParse(value);
+  if (!parsed.success) throw new TaskError("TASK_INVALID", "Invalid work item metadata.");
+  return parsed.data;
+}
+
+function workItemSummary(task: TaskEnvelope): WorkItemSummary | undefined {
+  const item = workItemMeta(task);
+  if (!item) return undefined;
+  return { workspaceId: item.workspaceId, category: item.category, sessionIds: item.sessionIds, executionIds: item.executionIds, updatedAt: item.updatedAt };
 }
 
 export interface TaskRecordResult {
@@ -123,7 +168,7 @@ export interface TaskRecordResult {
   readonly path: string;
   readonly archived: boolean;
   readonly revision: number;
-  readonly relations: readonly TaskRelation[];
+  readonly relations: readonly TaskRelationRecord[];
   readonly task: TaskEnvelope & { readonly status: TaskStatus };
   readonly prd: string;
   readonly handoff?: string;
@@ -136,6 +181,8 @@ export interface ShowTaskOptions {
 
 export interface ListTasksOptions {
   readonly root: string;
+  readonly workspaceId?: string;
+  readonly sessionId?: string;
   readonly status?: TaskStatus;
   readonly archived?: boolean;
   readonly limit?: number;
@@ -151,6 +198,10 @@ export interface TaskListEntry {
   readonly name?: string;
   readonly status?: TaskStatus;
   readonly revision?: number;
+  readonly priority?: string;
+  readonly createdAt?: string;
+  readonly completedAt?: string | null;
+  readonly workItem?: WorkItemSummary;
   readonly issues: readonly TaskValidationIssue[];
 }
 
@@ -279,6 +330,7 @@ interface TaskLocation {
   readonly archiveDirectory: string;
   readonly contextsFile: string;
   readonly locksDirectory: string;
+  readonly embeddedId?: string;
 }
 
 interface RawTask {
@@ -286,7 +338,7 @@ interface RawTask {
   readonly raw: Record<string, unknown>;
   readonly status: TaskStatus;
   readonly revision: number;
-  readonly relations: readonly TaskRelation[];
+  readonly relations: readonly TaskRelationRecord[];
 }
 
 interface LocatedTask {
@@ -404,14 +456,20 @@ function throwStorage(error: unknown): never {
 
 async function taskLocation(rootInput: string): Promise<TaskLocation> {
   const root = path.resolve(rootInput);
+  const embedded = await readEmbeddedTaskStorage(root);
+  const envelope = await resolveEnvelopeContext(root);
   const manifest = await loadManifest(root);
+  if (embedded) {
+    if (manifest || envelope.exists) throw new TaskError("TASK_CONFLICT", "Storage has both embedded and workspace identities.");
+    const directory = path.join(root, "tasks");
+    await assertTaskStorageBoundary(root, directory);
+    return { root, directory, archiveDirectory: path.join(directory, "archive"), contextsFile: path.join(root, "task-contexts.json"), locksDirectory: path.join(root, ".own-work-locks"), embeddedId: embedded.id };
+  }
   if (!manifest) {
-    throw new TaskError("WORKSPACE_NOT_FOUND", `No workspace manifest found at ${root}.`, {
-      details: { root },
-    });
+    if (envelope.exists) throw new TaskError("TASK_INVALID", "Existing workspace envelope has no valid compatible manifest.");
+    throw new TaskError("WORKSPACE_NOT_FOUND", `No workspace manifest found at ${root}.`, { details: { root } });
   }
   const layout = resolveWorkspaceLayout(manifest) ?? defaultStandaloneLayout();
-  const envelope = await resolveEnvelopeContext(root);
   const directory = path.join(root, workspaceWorkRelativePath(layout, "tasks"));
   const archiveDirectory = path.join(directory, "archive");
   const contextsFile = path.join(envelope.path, "task-contexts.json");
@@ -424,6 +482,41 @@ async function taskLocation(rootInput: string): Promise<TaskLocation> {
     throwStorage(error);
   }
   return { root, directory, archiveDirectory, contextsFile, locksDirectory };
+}
+
+export interface TaskStorageInspection {
+  readonly root: string;
+  readonly kind: "workspace" | "embedded" | "absent";
+  readonly storageId?: string;
+  readonly tasksDirectory?: string;
+  readonly empty?: boolean;
+}
+
+/** Inspect only; incompatible manifests and malformed markers propagate instead of selecting another store. */
+export async function inspectTaskStorage(root: string): Promise<TaskStorageInspection> {
+  try {
+    const location = await taskLocation(root);
+    return { root: location.root, kind: location.embeddedId ? "embedded" : "workspace", storageId: location.embeddedId ?? `workspace:${location.root}`, tasksDirectory: location.directory };
+  } catch (error) {
+    if (error instanceof TaskError && error.code === "WORKSPACE_NOT_FOUND") {
+      let empty = true;
+      try { empty = (await readdir(root)).length === 0; }
+      catch (readError) { if ((readError as NodeJS.ErrnoException).code !== "ENOENT") throw readError; }
+      return { root: path.resolve(root), kind: "absent", empty };
+    }
+    throw error;
+  }
+}
+
+async function withLocationLock<T>(location: TaskLocation, directory: string, callback: () => Promise<T>): Promise<T> {
+  if (!location.embeddedId) return withTaskLock(
+    location.root, directory, callback,
+  );
+  return withEmbeddedTaskLock(location.root, directory, async () => {
+    const marker = await readEmbeddedTaskStorage(location.root);
+    if (marker?.id !== location.embeddedId) throw new TaskError("TASK_CONFLICT", "Embedded storage identity changed.");
+    return callback();
+  });
 }
 
 function taskDirectory(location: TaskLocation, id: string, archived: boolean): string {
@@ -519,7 +612,7 @@ async function readBoundedText(
   return readTaskText(location.root, file);
 }
 
-function parseRelations(meta: Record<string, unknown>): readonly TaskRelation[] {
+function parseRelations(meta: Record<string, unknown>): readonly TaskRelationRecord[] {
   const assay = meta.assay;
   if (assay === undefined) return [];
   if (!isJsonObject(assay)) {
@@ -531,18 +624,19 @@ function parseRelations(meta: Record<string, unknown>): readonly TaskRelation[] 
     throw new TaskError("TASK_RELATION_INVALID", "task.meta.assay.relations must be an array");
   }
   return value.map((relation, index) => {
-    if (
-      !isJsonObject(relation) ||
-      typeof relation.type !== "string" ||
-      !TASK_RELATION_TYPES.includes(relation.type as TaskRelationType) ||
-      typeof relation.task_id !== "string"
-    ) {
+    if (!isJsonObject(relation) || typeof relation.type !== "string") {
       throw new TaskError("TASK_RELATION_INVALID", `invalid task relation at index ${index}`);
     }
-    return {
-      type: relation.type as TaskRelationType,
-      task_id: assertTaskId(relation.task_id),
-    };
+    if (TASK_RELATION_TYPES.includes(relation.type as TaskRelationType)) {
+      if (typeof relation.task_id !== "string") {
+        throw new TaskError("TASK_RELATION_INVALID", `invalid task relation at index ${index}`);
+      }
+      return { ...relation, type: relation.type as TaskRelationType, task_id: assertTaskId(relation.task_id) };
+    }
+    if (!LEGACY_TASK_RELATION_TYPES.includes(relation.type as LegacyTaskRelationType) || typeof relation.target !== "string") {
+      throw new TaskError("TASK_RELATION_INVALID", `invalid task relation at index ${index}`);
+    }
+    return { ...relation, type: relation.type as LegacyTaskRelationType, target: assertTaskId(relation.target) };
   });
 }
 
@@ -808,33 +902,20 @@ async function readTaskAt(
       path.join(located.directory, "task.json"),
       true,
     );
-    const prd = await readBoundedText(location, path.join(located.directory, "prd.md"), true);
-    const handoff = await readBoundedText(
-      location,
-      path.join(located.directory, "handoff.md"),
-      false,
-    );
-    if (taskText === undefined || prd === undefined) {
-      throw new TaskError("TASK_INVALID", `task ${expectedId} is missing required files`);
-    }
+    const prd = await readBoundedText(location, path.join(located.directory, "prd.md"), false);
+    const handoff = await readBoundedText(location, path.join(located.directory, "handoff.md"), false);
+    if (taskText === undefined) throw new TaskError("TASK_INVALID", `task ${expectedId} is missing required files`);
     let json: unknown;
     try {
       json = JSON.parse(taskText) as unknown;
     } catch (error) {
-      throw new TaskError(
-        "TASK_INVALID",
-        withSemanticModel(`task.json is not valid JSON: ${expectedId}`, "taskEnvelope"),
-        { cause: error },
-      );
+      throw new TaskError("TASK_INVALID", withSemanticModel(`task.json is not valid JSON: ${expectedId}`, "taskEnvelope"), { cause: error });
     }
     const raw = parseRawTask(json);
     if (raw.record.id !== expectedId) {
-      throw new TaskError(
-        "TASK_INVALID",
-        withSemanticModel(`task id does not match its directory: ${expectedId}`, "taskEnvelope"),
-        { details: { directory_id: expectedId, record_id: raw.record.id } },
-      );
+      throw new TaskError("TASK_INVALID", withSemanticModel(`task id does not match its directory: ${expectedId}`, "taskEnvelope"), { details: { directory_id: expectedId, record_id: raw.record.id } });
     }
+    if (prd === undefined && workItemMeta(raw.record)?.lightweight !== true) throw new TaskError("TASK_INVALID", `task ${expectedId} is missing prd.md`);
     if (handoff !== undefined) validateHandoff(handoff);
     return {
       root: location.root,
@@ -843,7 +924,7 @@ async function readTaskAt(
       revision: raw.revision,
       relations: raw.relations,
       task: { ...raw.record, status: raw.status },
-      prd,
+      prd: prd ?? "",
       ...(handoff === undefined ? {} : { handoff }),
     };
   } catch (error) {
@@ -863,7 +944,7 @@ async function readRawLocated(
 function recordWithAssay(
   raw: RawTask,
   updates: Partial<TaskEnvelope>,
-  relations: readonly TaskRelation[] = raw.relations,
+  relations: readonly TaskRelationRecord[] = raw.relations,
 ): Record<string, unknown> {
   const previousAssay = isJsonObject(raw.record.meta.assay) ? raw.record.meta.assay : {};
   const meta = {
@@ -925,20 +1006,18 @@ function normalizeRelations(
   });
 }
 
-/**
- * Walk the lineage graph reachable from these relations and refuse any cycle.
- *
- * This is the expensive half of Task integrity: it reads every reachable
- * record, so it belongs to writes (which must not create a cycle) and to
- * `validate` (which reports one) — never to `list`.
- */
-async function assertRelationsAcyclic(
+function relationTarget(relation: TaskRelationRecord): string {
+  if ("task_id" in relation && typeof relation.task_id === "string") return relation.task_id;
+  if ("target" in relation && typeof relation.target === "string") return relation.target;
+  throw new TaskError("TASK_RELATION_INVALID", "task relation has no valid target");
+}
+
+async function walkRelationsAcyclic(
   location: TaskLocation,
   sourceId: string,
-  relationsInput: readonly TaskRelation[],
+  relations: readonly TaskRelationRecord[],
   tree?: TaskTree,
-): Promise<readonly TaskRelation[]> {
-  const relations = normalizeRelations(sourceId, relationsInput);
+): Promise<void> {
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const visit = async (id: string): Promise<void> => {
@@ -951,19 +1030,27 @@ async function assertRelationsAcyclic(
     }
     if (visited.has(id)) return;
     if (visiting.has(id)) {
-      // Historical cycles not involving the source are malformed but cannot be
-      // repaired by writing a third task. Reject conservatively.
       throw new TaskError("TASK_RELATION_CYCLE", `task relation graph contains a cycle at ${id}`, {
         details: { strategy: "reject-all-directed-cycles" },
       });
     }
     visiting.add(id);
     const { raw } = await readRawLocated(location, id, tree);
-    for (const relation of raw.relations) await visit(relation.task_id);
+    for (const relation of raw.relations) await visit(relationTarget(relation));
     visiting.delete(id);
     visited.add(id);
   };
-  for (const relation of relations) await visit(relation.task_id);
+  for (const relation of relations) await visit(relationTarget(relation));
+}
+
+async function assertRelationsAcyclic(
+  location: TaskLocation,
+  sourceId: string,
+  relationsInput: readonly TaskRelation[],
+  tree?: TaskTree,
+): Promise<readonly TaskRelation[]> {
+  const relations = normalizeRelations(sourceId, relationsInput);
+  await walkRelationsAcyclic(location, sourceId, relations, tree);
   return relations;
 }
 
@@ -986,7 +1073,7 @@ async function writeMutation(
   expectedRevision: number | undefined,
   update: (raw: RawTask) => Promise<Record<string, unknown>> | Record<string, unknown>,
 ): Promise<TaskRecordResult> {
-  return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+  return withLocationLock(location, taskLockDirectory(location, id), async () => {
     const located = await locateTask(location, id);
     await recoverCheckpointTransaction(location, located, id);
     const raw = await rawTaskAtDirectory(location, located, id);
@@ -1013,16 +1100,34 @@ export async function createTask(options: CreateTaskOptions): Promise<TaskRecord
     throw new TaskError("TASK_INVALID", "task title must not be empty");
   }
   const location = await taskLocation(options.root);
-  // Allocation and initial relation validation share the global graph/create
-  // lock. This makes max(live + archive) + 1 safe across concurrent creators.
-  return withTaskLock(location.root, relationLockDirectory(location), async () => {
+  const workItem = options.workItem === undefined ? undefined : workItemCreateSchema.parse(options.workItem);
+  if (location.embeddedId && !workItem) throw new TaskError("TASK_INVALID", "Embedded creation requires workspace ownership and a request key.");
+  if (workItem && (options.name !== undefined || options.creator !== undefined || options.assignee !== undefined || options.relations !== undefined)) {
+    throw new TaskError("TASK_INVALID", "Lightweight creation does not accept task scaffolding options.");
+  }
+  const creation = { title, description: options.description?.trim() ?? "", priority: options.priority?.trim() || "P2", category: workItem?.category ?? "", sessionIds: workItem?.sessionIds ?? [], executionIds: workItem?.executionIds ?? [] };
+  if (workItem && (title.length > 1000 || creation.description.length > 100_000 || !["P0", "P1", "P2", "P3"].includes(creation.priority))) {
+    throw new TaskError("TASK_INVALID", "Invalid lightweight work item fields.");
+  }
+  return withLocationLock(location, relationLockDirectory(location), async () => {
+    if (workItem) {
+      const tree = await taskTree(location);
+      assertRecordBudget(tree);
+      for (const entry of tree.entries) {
+        const previous = await rawTaskAtDirectory(location, { directory: entry.directory, archived: entry.archived }, entry.name);
+        const meta = workItemMeta(previous.record);
+        if (meta?.workspaceId !== workItem.workspaceId || meta.requestKey !== workItem.requestKey) continue;
+        if (JSON.stringify(meta.creation) !== JSON.stringify(creation)) throw new TaskError("TASK_CONFLICT", "Creation key was already used with different fields.");
+        return showTask({ root: location.root, id: entry.name });
+      }
+    }
     let id: string;
     try {
       id = allocateReadableId("task", title, await storedTaskIds(location));
     } catch (error) {
       throw new TaskError("TASK_INVALID", "task id allocation failed", { cause: error });
     }
-    return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+    return withLocationLock(location, taskLockDirectory(location, id), async () => {
       const live = taskDirectory(location, id, false);
       const archived = taskDirectory(location, id, true);
       if ((await pathExists(live)) || (await pathExists(archived))) {
@@ -1048,6 +1153,7 @@ export async function createTask(options: CreateTaskOptions): Promise<TaskRecord
             revision: 0,
             relations: relations.map((relation) => ({ ...relation })),
           },
+          ...(workItem ? { own_work_item: { version: 1, lightweight: true, ...workItem, creation, updatedAt: (options.now ?? new Date()).toISOString(), history: [] } } : {}),
         },
       });
       await mkdir(location.directory, { recursive: true });
@@ -1060,11 +1166,13 @@ export async function createTask(options: CreateTaskOptions): Promise<TaskRecord
           path.join(temporary, "task.json"),
           renderTaskJson(record as unknown as Record<string, unknown>),
         );
-        await atomicWriteTaskText(
-          location.root,
-          path.join(temporary, "prd.md"),
-          renderTaskPrd(title, options.description),
-        );
+        if (!workItem) {
+          await atomicWriteTaskText(
+            location.root,
+            path.join(temporary, "prd.md"),
+            renderTaskPrd(title, options.description),
+          );
+        }
         await rename(temporary, live);
       } finally {
         await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
@@ -1077,11 +1185,25 @@ export async function createTask(options: CreateTaskOptions): Promise<TaskRecord
 export async function showTask(options: ShowTaskOptions): Promise<TaskRecordResult> {
   const location = await taskLocation(options.root);
   const id = assertTaskId(options.id);
-  return withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+  return withLocationLock(location, taskLockDirectory(location, id), async () => {
     const located = await locateTask(location, id);
     await recoverCheckpointTransaction(location, located, id);
     return readTaskAt(location, located, id);
   }).catch(throwStorage);
+}
+
+/** Non-mutating detail read: no locks, repairs, directories, or task-context writes. Concurrent checkpoint changes fail explicitly. */
+export async function peekTask(options: ShowTaskOptions): Promise<TaskRecordResult> {
+  const location = await taskLocation(options.root);
+  const id = assertTaskId(options.id);
+  const located = await locateTask(location, id);
+  if (await pathExists(checkpointTransactionPath(located.directory))) throw new TaskError("TASK_CONFLICT", "Task requires checkpoint recovery before reading.");
+  const result = await readTaskAt(location, located, id);
+  const current = await rawTaskAtDirectory(location, located, id);
+  if (current.revision !== result.revision || await pathExists(checkpointTransactionPath(located.directory))) {
+    throw new TaskError("TASK_REVISION_CONFLICT", "Task changed while reading details.");
+  }
+  return result;
 }
 
 function assertRecordBudget(tree: TaskTree): void {
@@ -1184,6 +1306,10 @@ async function surveyTaskStorage(
         name: raw.record.name,
         status: raw.status,
         revision: raw.revision,
+        priority: raw.record.priority,
+        createdAt: raw.record.createdAt,
+        completedAt: raw.record.completedAt,
+        ...(workItemSummary(raw.record) === undefined ? {} : { workItem: workItemSummary(raw.record)! }),
         issues: [],
       });
     } catch (error) {
@@ -1236,13 +1362,13 @@ async function validationForEntry(
     if (!entry.isDirectory || entry.isSymbolicLink) {
       throw new TaskError("TASK_STORAGE_BOUNDARY", "task entry is not a real directory");
     }
-    const task = await withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+    const task = await withLocationLock(location, taskLockDirectory(location, id), async () => {
       const located = { directory: entry.directory, archived };
       await recoverCheckpointTransaction(location, located, id);
       await assertTaskDirectoryShape(location, entry.directory);
       return readTaskAt(location, located, id);
     });
-    await assertRelationsAcyclic(location, id, task.relations, tree);
+    await walkRelationsAcyclic(location, id, task.relations, tree);
     return {
       id,
       path: relative,
@@ -1293,6 +1419,8 @@ export async function listTasks(options: ListTasksOptions): Promise<ListTasksRes
       entry.valid &&
       (options.archived === true || !entry.archived) &&
       (options.cursor === undefined || entry.id > options.cursor) &&
+      (options.workspaceId === undefined || entry.workItem?.workspaceId === options.workspaceId || (entry.workItem === undefined && !location.embeddedId)) &&
+      (options.sessionId === undefined || entry.workItem?.sessionIds.includes(options.sessionId) === true) &&
       (status === undefined || entry.status === status),
   );
   const page = matching.slice(0, limit);
@@ -1303,6 +1431,49 @@ export async function listTasks(options: ListTasksOptions): Promise<ListTasksRes
     issues: survey.filter((entry) => !entry.valid),
     ...(matching.length > page.length && last !== undefined ? { next_cursor: last.id } : {}),
   };
+}
+
+/** One revision-checked task.json mutation; authored documents and unknown envelope/metadata fields survive. */
+export async function updateWorkItem(options: UpdateWorkItemOptions): Promise<TaskRecordResult> {
+  const parsed = workItemPatchSchema.safeParse(options.patch);
+  if (!parsed.success || !Number.isSafeInteger(options.expectedRevision) || options.expectedRevision < 0 || !options.workspaceId || options.workspaceId.length > 512) {
+    throw new TaskError("TASK_INVALID", "Invalid work item mutation.");
+  }
+  const patch = parsed.data;
+  const location = await taskLocation(options.root);
+  return writeMutation(location, options.id, options.expectedRevision, (raw) => {
+    const at = (options.now ?? new Date()).toISOString();
+    const meta = workItemMeta(raw.record) ?? {
+      version: 1 as const, lightweight: false, workspaceId: options.workspaceId,
+      requestKey: `existing:${options.id}`, category: "", sessionIds: [], executionIds: [],
+      updatedAt: at, history: [],
+      creation: { title: raw.record.title, description: raw.record.description, priority: raw.record.priority, category: "", sessionIds: [], executionIds: [] },
+    };
+    if (meta.workspaceId !== options.workspaceId) throw new TaskError("TASK_CONFLICT", "Work item belongs to another workspace.");
+    const status = patch.status ?? raw.status;
+    if (isTerminal(raw.status) && status !== raw.status) throw new TaskError("TASK_TERMINAL", "Terminal tasks cannot change status.");
+    const updates: Partial<TaskEnvelope> = {
+      title: patch.title ?? raw.record.title,
+      description: patch.description ?? raw.record.description,
+      priority: patch.priority ?? raw.record.priority,
+      status,
+      completedAt: isTerminal(status) ? (raw.record.completedAt ?? at.slice(0, 10)) : null,
+    };
+    const next = workItemMetadataSchema.parse({
+      ...meta, category: patch.category ?? meta.category,
+      sessionIds: patch.sessionIds ?? meta.sessionIds,
+      executionIds: patch.executionIds ?? meta.executionIds,
+      updatedAt: at,
+      history: [...meta.history, { revision: raw.revision, at, previous: {
+        title: raw.record.title, description: raw.record.description, priority: raw.record.priority, status: raw.status,
+        category: meta.category, sessionIds: meta.sessionIds, executionIds: meta.executionIds,
+      } }],
+    });
+    const result = recordWithAssay(raw, updates);
+    result.meta = { ...(result.meta as Record<string, unknown>), own_work_item: next };
+    if (Buffer.byteLength(renderTaskJson(result), "utf8") > MAX_TASK_FILE_BYTES) throw new TaskError("TASK_INVALID", "Work item history exceeds the record size limit; history was not truncated.");
+    return result;
+  });
 }
 
 export async function updateTaskStatus(
@@ -1328,7 +1499,7 @@ export async function updateTaskStatus(
 export async function checkpointTask(options: CheckpointTaskOptions): Promise<TaskRecordResult> {
   validateHandoff(options.handoff);
   const location = await taskLocation(options.root);
-  return withTaskLock(location.root, taskLockDirectory(location, options.id), async () => {
+  return withLocationLock(location, taskLockDirectory(location, options.id), async () => {
     const id = assertTaskId(options.id);
     const located = await locateTask(location, id);
     await recoverCheckpointTransaction(location, located, id);
@@ -1405,8 +1576,8 @@ export async function finishTask(options: FinishTaskOptions): Promise<TaskRecord
 export async function archiveTask(options: ArchiveTaskOptions): Promise<TaskRecordResult> {
   const location = await taskLocation(options.root);
   const id = assertTaskId(options.id);
-  return withTaskLock(location.root, relationLockDirectory(location), () =>
-    withTaskLock(location.root, taskLockDirectory(location, id), async () => {
+  return withLocationLock(location, relationLockDirectory(location), () =>
+    withLocationLock(location, taskLockDirectory(location, id), async () => {
       // Archive storage stays flat whatever prefix the Task was filed under, so
       // the source is wherever the tree found it and the target is always
       // tasks/archive/<id>.
@@ -1483,7 +1654,7 @@ export async function bindTask(options: BindTaskOptions): Promise<TaskContextRes
   const contextKey = assertContextKey(options.contextKey);
   const selected = await showTask({ root: options.root, id: options.id });
   const location = await taskLocation(selected.root);
-  return withTaskLock(location.root, contextLockDirectory(location), async () => {
+  return withLocationLock(location, contextLockDirectory(location), async () => {
     const contexts = await readContexts(location);
     const existing = contexts.bindings[contextKey];
     if (existing !== undefined && existing !== selected.task.id && !options.rebind) {
@@ -1508,7 +1679,7 @@ export async function clearTaskContext(
 ): Promise<TaskContextResult> {
   const contextKey = assertContextKey(options.contextKey);
   const location = await taskLocation(options.root);
-  return withTaskLock(location.root, contextLockDirectory(location), async () => {
+  return withLocationLock(location, contextLockDirectory(location), async () => {
     const contexts = await readContexts(location);
     delete contexts.bindings[contextKey];
     await writeContexts(location, contexts);
@@ -1557,7 +1728,7 @@ export async function setTaskRelations(
   options: SetTaskRelationsOptions,
 ): Promise<TaskRecordResult> {
   const location = await taskLocation(options.root);
-  return withTaskLock(location.root, relationLockDirectory(location), () =>
+  return withLocationLock(location, relationLockDirectory(location), () =>
     writeMutation(location, options.id, options.expectedRevision, async (raw) => {
       const relations = await assertRelationsAcyclic(location, options.id, options.relations);
       return recordWithAssay(raw, {}, relations);

@@ -361,6 +361,15 @@ export async function withTaskLock<T>(
   });
 }
 
+/** Storage-local lock primitive for embedded stores that have no workspace envelope or migration authority. */
+export async function withEmbeddedTaskLock<T>(
+  root: string,
+  lockDirectory: string,
+  callback: () => Promise<T>,
+): Promise<T> {
+  return withTaskLockRaw(root, lockDirectory, callback, lockProbe);
+}
+
 /** Test-only access to the task-lock protocol without the workspace owner gate. */
 export async function withTaskLockUncoordinatedForTests<T>(
   root: string,
@@ -480,16 +489,25 @@ async function tryClaimLock(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     await probe?.("before-claim", finalDirectory, temporaryDirectory);
-    try {
-      await rename(temporaryDirectory, finalDirectory);
-      claimed = true;
-    } catch (error) {
+    for (let attempt = 0; ; attempt += 1) {
       try {
-        await lstat(finalDirectory);
-        return false;
-      } catch (inspectionError) {
-        if ((inspectionError as NodeJS.ErrnoException).code === "ENOENT") throw error;
-        throw inspectionError;
+        await assertTaskStorageBoundary(root, temporaryDirectory);
+        await assertTaskStorageBoundary(root, finalDirectory);
+        await rename(temporaryDirectory, finalDirectory);
+        claimed = true;
+        break;
+      } catch (error) {
+        try {
+          await lstat(finalDirectory);
+          return false;
+        } catch (inspectionError) {
+          if ((inspectionError as NodeJS.ErrnoException).code !== "ENOENT") throw inspectionError;
+        }
+        if (!isWindowsTeardown(error) || attempt >= REMOVAL_RETRY.maxRetries) throw error;
+        await new Promise((resolve) => setTimeout(resolve, REMOVAL_RETRY.retryDelay));
+        if ((await readLockOwner(root, temporaryDirectory)).token !== token) {
+          throw new TaskLockUnavailableError(temporaryDirectory, "prepared lock ownership changed during retry");
+        }
       }
     }
     const owner = await readLockOwner(root, finalDirectory);
