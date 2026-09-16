@@ -348,7 +348,7 @@ describe("native Task creation and Markdown contract", () => {
 });
 
 describe("native Task lifecycle and selection", () => {
-  it("reads aliases, resumes paused tasks, and never implicitly reopens terminal tasks", async () => {
+  it("reads aliases, resumes paused tasks, and explicitly reopens terminal tasks", async () => {
     const root = await workspace("Statuses");
     const created = await createTask({ root, title: "Statuses" });
     await rewriteTask(root, created.task.id, (record) => {
@@ -363,9 +363,9 @@ describe("native Task lifecycle and selection", () => {
     ).toBe("active");
     const done = await finishTask({ root, id: created.task.id });
     expect(done.task.status).toBe("done");
-    await expect(
-      updateTaskStatus({ root, id: created.task.id, status: "active" }),
-    ).rejects.toMatchObject({ code: "TASK_TERMINAL" });
+    const reopened = await updateTaskStatus({ root, id: created.task.id, status: "active" });
+    expect(reopened.task.status).toBe("active");
+    expect(reopened.task.completedAt).toBeNull();
   });
 
   it("selects only explicit id or exact context and never active-count fallback", async () => {

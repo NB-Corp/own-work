@@ -158,8 +158,6 @@ export function semanticHints(key: SemanticHintKey): readonly string[] {
 }
 
 export const SEMANTIC_MODELS = {
-  taskTerminal:
-    "Terminal Tasks stay terminal: create a successor Task and record `continues` or `supersedes`.",
   taskArchived: "An archived Task is a record: create a successor Task when the outcome continues.",
   taskNotTerminal:
     "Archive follows a terminal status: run `ownwork task finish`, or set cancelled or superseded first.",

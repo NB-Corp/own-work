@@ -1451,7 +1451,6 @@ export async function updateWorkItem(options: UpdateWorkItemOptions): Promise<Ta
     };
     if (meta.workspaceId !== options.workspaceId) throw new TaskError("TASK_CONFLICT", "Work item belongs to another workspace.");
     const status = patch.status ?? raw.status;
-    if (isTerminal(raw.status) && status !== raw.status) throw new TaskError("TASK_TERMINAL", "Terminal tasks cannot change status.");
     const updates: Partial<TaskEnvelope> = {
       title: patch.title ?? raw.record.title,
       description: patch.description ?? raw.record.description,
@@ -1482,13 +1481,6 @@ export async function updateTaskStatus(
   const status = normalizeStatus(options.status);
   const location = await taskLocation(options.root);
   return writeMutation(location, options.id, options.expectedRevision, (raw) => {
-    if (isTerminal(raw.status) && status !== raw.status) {
-      throw new TaskError(
-        "TASK_TERMINAL",
-        withSemanticModel(`terminal task cannot change status: ${options.id}`, "taskTerminal"),
-        { details: { status: raw.status } },
-      );
-    }
     const completedAt = isTerminal(status)
       ? (raw.record.completedAt ?? (options.now ?? new Date()).toISOString().slice(0, 10))
       : null;

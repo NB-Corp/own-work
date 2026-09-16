@@ -250,7 +250,7 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
     expect(cleared.exitCode, cleared.stderr).toBe(0);
   });
 
-  it("pauses, resumes, finishes, rejects implicit reopen, and reports revision conflicts", async () => {
+  it("pauses, resumes, finishes, reopens explicitly, and reports revision conflicts", async () => {
     const root = await workspace("lifecycle");
     const created = await create(root, "Lifecycle");
     const id = taskId(created);
@@ -298,9 +298,11 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
     expect(finished.exitCode, finished.stderr).toBe(0);
     expect((JSON.parse(finished.stdout) as { task: { status: string } }).task.status).toBe("done");
 
-    const reopened = await cliRunner.runCli(["task", "status", id, "active", "--root", root]);
-    expect(reopened.exitCode).toBe(1);
-    expect(reopened.stderr).toContain("TASK_TERMINAL");
+    const reopened = await cliRunner.runCli(["task", "status", id, "active", "--root", root, "--json"]);
+    expect(reopened.exitCode, reopened.stderr).toBe(0);
+    expect(
+      (JSON.parse(reopened.stdout) as { task: { status: string; completedAt: string | null } }).task,
+    ).toMatchObject({ status: "active", completedAt: null });
   });
 
   it("archives terminal tasks and provides deterministic paginated archive scopes", async () => {

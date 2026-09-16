@@ -52,7 +52,7 @@ describe("embedded work items", () => {
     await expect(updateWorkItem({ root, workspaceId: "workspace-b", id: created.task.id, expectedRevision: 1, patch: { title: "Wrong workspace" } })).rejects.toMatchObject({ code: "TASK_CONFLICT" });
   });
 
-  it("allows one concurrent writer and never reopens terminal records", async () => {
+  it("allows one concurrent writer and reopens terminal records", async () => {
     const root = await store();
     const created = await createTask({ root, title: "Idea", workItem: { workspaceId: "workspace-a", requestKey: "submit-a" } });
     const request = { root, workspaceId: "workspace-a", id: created.task.id, expectedRevision: 0 };
@@ -63,7 +63,9 @@ describe("embedded work items", () => {
     expect(results.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
     expect(results.find((entry) => entry.status === "rejected")).toMatchObject({ reason: { code: "TASK_REVISION_CONFLICT" } });
     await updateWorkItem({ ...request, expectedRevision: 1, patch: { status: "done" } });
-    await expect(updateWorkItem({ ...request, expectedRevision: 2, patch: { status: "active" } })).rejects.toMatchObject({ code: "TASK_TERMINAL" });
+    const reopened = await updateWorkItem({ ...request, expectedRevision: 2, patch: { status: "active" } });
+    expect(reopened.task.status).toBe("active");
+    expect(reopened.task.completedAt).toBeNull();
   });
 
   it("refuses foreign content, damaged markers, and read-time checkpoint repair", async () => {

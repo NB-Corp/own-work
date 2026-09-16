@@ -54,8 +54,8 @@ describe("own-work semantics registry", () => {
 
   it("states the correct ownwork model as a second sentence on teaching errors", () => {
     expect(
-      withSemanticModel("terminal task cannot change status: task-0001-a", "taskTerminal"),
-    ).toBe(`terminal task cannot change status: task-0001-a. ${SEMANTIC_MODELS.taskTerminal}`);
+      withSemanticModel("archived task cannot be changed: task-0001-a", "taskArchived"),
+    ).toBe(`archived task cannot be changed: task-0001-a. ${SEMANTIC_MODELS.taskArchived}`);
     for (const message of Object.values(SEMANTIC_MODELS)) expect(message).not.toContain("assay ");
   });
 });
