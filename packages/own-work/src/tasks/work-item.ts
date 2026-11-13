@@ -18,7 +18,9 @@ export const workItemPatchSchema = z.object({
   category: z.string().max(256).optional(),
   sessionIds: links.optional(),
   executionIds: links.optional(),
-  status: z.enum(["active", "paused", "done", "cancelled", "superseded"]).optional(),
+  status: z
+    .enum(["active", "in_progress", "paused", "done", "cancelled", "superseded"])
+    .optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "A patch must change at least one field.");
 export type WorkItemPatch = z.infer<typeof workItemPatchSchema>;
 

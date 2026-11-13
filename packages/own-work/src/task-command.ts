@@ -361,7 +361,7 @@ export function addTaskCommand(program: Command, dependencies: TaskCommandDepend
     .command("status")
     .description("Set task status")
     .argument("<id>", "task id")
-    .argument("<status>", "active, paused, done, cancelled, or superseded")
+    .argument("<status>", "active, in_progress, paused, done, cancelled, or superseded")
     .option("--expected-revision <n>", "require the current revision")
     .option("--root <target-dir>", "target workspace directory", process.cwd())
     .option("--json", "emit JSON")

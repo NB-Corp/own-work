@@ -63,8 +63,12 @@ describe("embedded work items", () => {
     expect(results.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
     expect(results.find((entry) => entry.status === "rejected")).toMatchObject({ reason: { code: "TASK_REVISION_CONFLICT" } });
     await updateWorkItem({ ...request, expectedRevision: 1, patch: { status: "done" } });
-    const reopened = await updateWorkItem({ ...request, expectedRevision: 2, patch: { status: "active" } });
-    expect(reopened.task.status).toBe("active");
+    const reopened = await updateWorkItem({
+      ...request,
+      expectedRevision: 2,
+      patch: { status: "in_progress" },
+    });
+    expect(reopened.task.status).toBe("in_progress");
     expect(reopened.task.completedAt).toBeNull();
   });
 

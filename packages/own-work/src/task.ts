@@ -68,7 +68,14 @@ export function setTaskArchiveProbeForTests(probe: TaskArchiveProbe | undefined)
   archiveProbe = probe;
 }
 
-export const TASK_WRITE_STATUSES = ["active", "paused", "done", "cancelled", "superseded"] as const;
+export const TASK_WRITE_STATUSES = [
+  "active",
+  "in_progress",
+  "paused",
+  "done",
+  "cancelled",
+  "superseded",
+] as const;
 export type TaskStatus = (typeof TASK_WRITE_STATUSES)[number];
 export const TASK_RELATION_TYPES = ["contributes_to", "continues", "supersedes"] as const;
 export type TaskRelationType = (typeof TASK_RELATION_TYPES)[number];
@@ -367,7 +374,7 @@ class SimulatedTaskCrash extends Error {}
 const STATUS_ALIASES: Readonly<Record<string, TaskStatus>> = {
   active: "active",
   planning: "active",
-  in_progress: "active",
+  in_progress: "in_progress",
   review: "active",
   open: "active",
   paused: "paused",

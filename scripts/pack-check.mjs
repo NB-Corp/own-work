@@ -20,7 +20,7 @@ try {
   const archives = (await readdir(destination)).filter((name) => name.endsWith(".tgz"));
   if (archives.length !== 1)
     throw new Error(`expected one package archive, found ${archives.join(", ")}`);
-  const { stdout } = await execFileAsync("tar", ["-tf", path.join(destination, archives[0])]);
+  const { stdout } = await execFileAsync("tar", ["-tf", archives[0]], { cwd: destination });
   const files = stdout.trim().split(/\r?\n/).sort();
   for (const required of [
     "package/LICENSE",

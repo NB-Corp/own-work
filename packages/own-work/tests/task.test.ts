@@ -361,10 +361,13 @@ describe("native Task lifecycle and selection", () => {
     expect(
       (await updateTaskStatus({ root, id: created.task.id, status: "open" })).task.status,
     ).toBe("active");
+    expect(
+      (await updateTaskStatus({ root, id: created.task.id, status: "in_progress" })).task.status,
+    ).toBe("in_progress");
     const done = await finishTask({ root, id: created.task.id });
     expect(done.task.status).toBe("done");
-    const reopened = await updateTaskStatus({ root, id: created.task.id, status: "active" });
-    expect(reopened.task.status).toBe("active");
+    const reopened = await updateTaskStatus({ root, id: created.task.id, status: "in_progress" });
+    expect(reopened.task.status).toBe("in_progress");
     expect(reopened.task.completedAt).toBeNull();
   });
 

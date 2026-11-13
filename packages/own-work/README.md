@@ -11,7 +11,7 @@ ownwork roadmap create --title "Pulse-level control"   # an intended outcome, no
 ownwork system register ./packages/engine --primary    # what you are actually building
 ```
 
-> Status: 0.1.1, [on npm](https://www.npmjs.com/package/own-work). The commands above are the committed surface for the first release, and every one of them is run against the CLI before it ships.
+> Version: 0.1.2. The commands above remain part of the CLI surface and are exercised against the CLI before release.
 
 ## Install
 

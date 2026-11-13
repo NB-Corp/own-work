@@ -257,7 +257,7 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
 
     for (const [status, revision] of [
       ["paused", "0"],
-      ["active", "1"],
+      ["in_progress", "1"],
     ] as const) {
       const changed = await cliRunner.runCli([
         "task",
@@ -271,6 +271,7 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
         "--json",
       ]);
       expect(changed.exitCode, changed.stderr).toBe(0);
+      expect((JSON.parse(changed.stdout) as { task: { status: string } }).task.status).toBe(status);
     }
 
     const stale = await cliRunner.runCli([
@@ -298,11 +299,19 @@ describe("assay task CLI", { timeout: 60_000 }, () => {
     expect(finished.exitCode, finished.stderr).toBe(0);
     expect((JSON.parse(finished.stdout) as { task: { status: string } }).task.status).toBe("done");
 
-    const reopened = await cliRunner.runCli(["task", "status", id, "active", "--root", root, "--json"]);
+    const reopened = await cliRunner.runCli([
+      "task",
+      "status",
+      id,
+      "in_progress",
+      "--root",
+      root,
+      "--json",
+    ]);
     expect(reopened.exitCode, reopened.stderr).toBe(0);
     expect(
       (JSON.parse(reopened.stdout) as { task: { status: string; completedAt: string | null } }).task,
-    ).toMatchObject({ status: "active", completedAt: null });
+    ).toMatchObject({ status: "in_progress", completedAt: null });
   });
 
   it("archives terminal tasks and provides deterministic paginated archive scopes", async () => {
